@@ -1,0 +1,6 @@
+{
+  "name": "MediCare AI",
+  "description": "Smart Medicine Reminder & AI Health Assistant for timely medication adherence",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
