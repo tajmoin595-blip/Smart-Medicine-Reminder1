@@ -1,454 +1,619 @@
 import React, { useState, useEffect } from 'react';
-import {
-  CheckCircle2,
-  XCircle,
-  Clock,
-  AlertCircle,
-  Sparkles,
-  Volume2,
-  Calendar,
-  Pill,
-  ArrowRight,
-  RotateCcw,
-  Plus,
+import { 
+  Plus, 
+  Check, 
+  X, 
+  Clock, 
+  Sparkles, 
+  TrendingUp, 
+  AlertTriangle, 
+  BellRing, 
+  Pill, 
+  Calendar, 
+  ChevronRight, 
+  Info,
   ShieldCheck,
-  Check,
-  X,
-  MinusCircle,
-  Bell,
-  HeartPulse,
+  RefreshCw,
+  Sun,
+  Sunset,
+  Moon,
+  CloudSun,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
-import { MedicineItem, DoseLog, DoseStatus, AppSettings } from '../types';
-import { StorageService } from '../services/storage';
-import { soundEngine } from '../utils/audio';
+import { Medicine, MedicineHistoryItem, TimeSlot } from '../types';
+import { getMedicines, getHistory, recordDose, getFamilyMembers } from '../services/storage';
+import { fetchDailyHealthTipAI, getDailyHealthSummaryAI } from '../services/aiService';
+import { triggerBrowserNotification } from '../services/notificationService';
 
 interface DashboardProps {
-  medicines: MedicineItem[];
-  doseLogs: DoseLog[];
-  onUpdateDoseLog: (
-    medicineId: string,
-    medicineName: string,
-    status: DoseStatus,
-    timeScheduled: string,
-    type: any,
-    color: string
-  ) => void;
-  onNavigateToMedicines: () => void;
-  onNavigateToAi: () => void;
-  settings: AppSettings;
+  onOpenAddMedicine: () => void;
+  onOpenAIHub: (tool?: string) => void;
+  setActiveTab: (tab: string) => void;
+  searchQuery?: string;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({
-  medicines,
-  doseLogs,
-  onUpdateDoseLog,
-  onNavigateToMedicines,
-  onNavigateToAi,
-  settings,
+  onOpenAddMedicine,
+  onOpenAIHub,
+  setActiveTab,
+  searchQuery = ''
 }) => {
-  const [selectedTimeFilter, setSelectedTimeFilter] = useState<'All' | 'Morning' | 'Afternoon' | 'Evening' | 'Night'>('All');
-  const [nextCountdownStr, setNextCountdownStr] = useState<string>('');
-  const [upcomingMed, setUpcomingMed] = useState<MedicineItem | null>(null);
+  const [medicines, setMedicines] = useState<Medicine[]>([]);
+  const [history, setHistory] = useState<MedicineHistoryItem[]>([]);
+  const [healthTip, setHealthTip] = useState<{ tip: string; category: string } | null>(null);
+  const [loadingTip, setLoadingTip] = useState(false);
+  const [now, setNow] = useState<Date>(new Date());
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  useEffect(() => {
+    loadData();
+    const timer = setInterval(() => setNow(new Date()), 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const loadData = () => {
+    setMedicines(getMedicines());
+    setHistory(getHistory());
+  };
+
+  useEffect(() => {
+    fetchTip();
+  }, []);
+
+  const fetchTip = async () => {
+    setLoadingTip(true);
+    const data = await fetchDailyHealthTipAI();
+    setHealthTip(data);
+    setLoadingTip(false);
+  };
 
   const todayStr = new Date().toISOString().split('T')[0];
+  const todayHistory = history.filter(h => h.date === todayStr);
 
-  // Map today's medicine items with their log status
-  const todayDoses = medicines.map((med) => {
-    const existingLog = doseLogs.find((l) => l.medicineId === med.id && l.date === todayStr);
-    const status: DoseStatus = existingLog ? existingLog.status : 'Pending';
-    return {
-      med,
-      log: existingLog,
-      status,
-    };
-  });
+  // Derive today's scheduled doses
+  interface DailyDoseItem {
+    medicine: Medicine;
+    slot: TimeSlot;
+    time: string;
+    status: 'Taken' | 'Missed' | 'Skipped' | 'Pending';
+  }
 
-  const filteredDoses = todayDoses.filter((item) => {
-    if (selectedTimeFilter === 'All') return true;
-    return item.med.timesOfDay.includes(selectedTimeFilter);
-  });
-
-  const totalToday = todayDoses.length;
-  const takenCount = todayDoses.filter((d) => d.status === 'Taken').length;
-  const missedCount = todayDoses.filter((d) => d.status === 'Missed').length;
-  const skippedCount = todayDoses.filter((d) => d.status === 'Skipped').length;
-  const pendingCount = todayDoses.filter((d) => d.status === 'Pending').length;
-
-  const adherencePercentage = totalToday > 0 ? Math.round((takenCount / totalToday) * 100) : 100;
-
-  // Live countdown ticker to next upcoming dose
-  useEffect(() => {
-    const calculateNextDose = () => {
-      const now = new Date();
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-      let minDiff = Infinity;
-      let closest: MedicineItem | null = null;
-
-      medicines.forEach((m) => {
-        if (!m.specificTime) return;
-        const [h, min] = m.specificTime.split(':').map(Number);
-        const medMinutes = h * 60 + min;
-
-        let diff = medMinutes - currentMinutes;
-        if (diff <= 0) diff += 24 * 60; // next day if passed
-
-        if (diff < minDiff) {
-          minDiff = diff;
-          closest = m;
-        }
-      });
-
-      setUpcomingMed(closest);
-      if (minDiff !== Infinity) {
-        const hrs = Math.floor(minDiff / 60);
-        const mins = minDiff % 60;
-        if (hrs > 0) {
-          setNextCountdownStr(`${hrs} hr ${mins} min`);
+  const dailyDoses: DailyDoseItem[] = [];
+  medicines.forEach(med => {
+    med.times.forEach(t => {
+      if (t.enabled) {
+        // check history status
+        const recorded = todayHistory.find(h => h.medicineId === med.id && h.slot === t.slot);
+        let status: DailyDoseItem['status'] = 'Pending';
+        if (recorded) {
+          status = recorded.status as DailyDoseItem['status'];
         } else {
-          setNextCountdownStr(`${mins} min`);
+          // If past time today, consider missed
+          const [hStr, mStr] = t.time.split(':');
+          const schedDate = new Date();
+          schedDate.setHours(parseInt(hStr, 10), parseInt(mStr, 10), 0, 0);
+          if (now > schedDate && now.getTime() - schedDate.getTime() > 30 * 60 * 1000) {
+            status = 'Missed';
+          }
         }
-      } else {
-        setNextCountdownStr('None scheduled');
+
+        dailyDoses.push({
+          medicine: med,
+          slot: t.slot,
+          time: t.time,
+          status
+        });
       }
-    };
+    });
+  });
 
-    calculateNextDose();
-    const interval = setInterval(calculateNextDose, 30000);
-    return () => clearInterval(interval);
-  }, [medicines]);
+  // Filter by search query if present
+  const filteredDoses = dailyDoses.filter(d => 
+    d.medicine.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    d.medicine.disease?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    d.medicine.doctorName?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  const handleAction = (item: typeof todayDoses[0], newStatus: DoseStatus) => {
-    onUpdateDoseLog(
-      item.med.id,
-      item.med.name,
-      newStatus,
-      item.med.specificTime || '08:00',
-      item.med.type,
-      item.med.color
+  const completedCount = dailyDoses.filter(d => d.status === 'Taken').length;
+  const missedCount = dailyDoses.filter(d => d.status === 'Missed').length;
+  const totalCount = dailyDoses.length;
+  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 100;
+
+  // Next upcoming reminder logic
+  const upcomingDoses = dailyDoses
+    .filter(d => d.status === 'Pending')
+    .sort((a, b) => a.time.localeCompare(b.time));
+
+  const nextReminder = upcomingDoses[0];
+
+  const handleAction = (med: Medicine, slot: TimeSlot, time: string, actionStatus: 'Taken' | 'Missed' | 'Skipped') => {
+    recordDose(
+      med.id,
+      med.name,
+      med.dosage,
+      med.type,
+      time,
+      slot,
+      actionStatus
     );
+    loadData();
 
-    if (newStatus === 'Taken' && settings.notificationSound) {
-      soundEngine.playSuccessChime();
-    } else if (newStatus === 'Missed' && settings.notificationSound) {
-      soundEngine.playReminderAlarm();
-    }
-
-    if (settings.voiceReminders && newStatus === 'Taken') {
-      soundEngine.speakText(`Great job! ${item.med.name} marked as taken.`);
+    if (actionStatus === 'Taken') {
+      triggerBrowserNotification(
+        'Medicine Taken! Great Job!',
+        `You marked ${med.name} (${med.dosage}) as taken for ${slot}.`
+      );
     }
   };
 
+  const toggleSpeakSchedule = () => {
+    if (!('speechSynthesis' in window)) {
+      alert("Voice speech synthesis is not supported on this browser.");
+      return;
+    }
+
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    let text = "Hello! Here is your medicine status for today. ";
+    if (dailyDoses.length === 0) {
+      text += "You have no medicines scheduled for today.";
+    } else {
+      const pending = dailyDoses.filter(d => d.status === 'Pending');
+      if (pending.length === 0) {
+        text += "Wonderful news! You have taken all your scheduled medicines for today.";
+      } else {
+        text += `You have ${completedCount} taken and ${pending.length} remaining doses. `;
+        if (nextReminder) {
+          text += `Your next medicine is ${nextReminder.medicine.name}, dosage ${nextReminder.medicine.dosage}, scheduled for ${nextReminder.slot} at ${nextReminder.time}. `;
+          if (nextReminder.medicine.foodTiming) {
+            text += `Take it ${nextReminder.medicine.foodTiming}.`;
+          }
+        }
+      }
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.9;
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const timeSlots: { name: TimeSlot; icon: any; color: string; bg: string }[] = [
+    { name: 'Morning', icon: Sun, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-950/30' },
+    { name: 'Afternoon', icon: CloudSun, color: 'text-sky-500', bg: 'bg-sky-50 dark:bg-sky-950/30' },
+    { name: 'Evening', icon: Sunset, color: 'text-indigo-500', bg: 'bg-indigo-50 dark:bg-indigo-950/30' },
+    { name: 'Night', icon: Moon, color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-950/30' }
+  ];
+
   return (
-    <div className="space-y-6 pb-12">
-      {/* Top Banner Greeting */}
-      <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 rounded-3xl p-6 sm:p-8 text-white shadow-xl shadow-emerald-900/10 relative overflow-hidden">
-        <div className="absolute top-0 right-0 -mt-8 -mr-8 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none" />
+    <div className="space-y-6 pb-12 animate-fade-in">
+      
+      {/* Top Banner & Quick Add */}
+      <div className="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 rounded-3xl p-6 text-white shadow-xl shadow-blue-600/15 relative overflow-hidden">
+        <div className="absolute right-0 top-0 w-96 h-96 bg-white/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
         
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-xs font-semibold">
-              <Calendar className="w-3.5 h-3.5" />
-              <span>Today's Overview</span>
-            </div>
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              Good day! Keep up your health routine.
-            </h2>
-            <p className="text-emerald-100 text-sm max-w-xl">
-              You have completed <strong className="text-white underline">{takenCount}</strong> of{' '}
-              <strong className="text-white">{totalToday}</strong> scheduled doses today.
-            </p>
-          </div>
-
-          {/* Quick Progress Dial / Bar */}
-          <div className="bg-white/15 backdrop-blur-md rounded-2xl p-4 border border-white/20 flex items-center gap-4 min-w-[220px]">
-            <div className="relative w-16 h-16 flex items-center justify-center">
-              <svg className="w-16 h-16 transform -rotate-90">
-                <circle
-                  cx="32"
-                  cy="32"
-                  r="26"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  className="text-white/20"
-                  fill="transparent"
-                />
-                <circle
-                  cx="32"
-                  cy="32"
-                  r="26"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  strokeDasharray={163}
-                  strokeDashoffset={163 - (163 * adherencePercentage) / 100}
-                  className="text-white transition-all duration-700 ease-out"
-                  strokeLinecap="round"
-                  fill="transparent"
-                />
-              </svg>
-              <span className="absolute text-sm font-extrabold">{adherencePercentage}%</span>
-            </div>
-            <div>
-              <div className="text-xs text-emerald-100 font-medium">Daily Adherence</div>
-              <div className="text-lg font-bold text-white">
-                {takenCount}/{totalToday} Taken
-              </div>
-              <div className="text-[11px] text-emerald-200">
-                {missedCount > 0 ? `⚠️ ${missedCount} Missed` : '✓ On track'}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Next Reminder Card */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Next Reminder</span>
-            <Clock className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
-            {nextCountdownStr}
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 truncate">
-            {upcomingMed ? `${upcomingMed.name} at ${upcomingMed.specificTime}` : 'All doses complete for today'}
-          </p>
-        </div>
-
-        {/* Completed Doses */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Completed</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          </div>
-          <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-            {takenCount}
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            {totalToday > 0 ? `${Math.round((takenCount / totalToday) * 100)}% of today's plan` : '0 doses'}
-          </p>
-        </div>
-
-        {/* Missed Doses */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Missed</span>
-            <AlertCircle className="w-4 h-4 text-red-500" />
-          </div>
-          <div className="text-2xl font-black text-red-600 dark:text-red-400">
-            {missedCount}
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            {missedCount > 0 ? 'Caregivers automatically notified' : 'No missed doses today'}
-          </p>
-        </div>
-
-        {/* Pending Doses */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Pending</span>
-            <Bell className="w-4 h-4 text-amber-500" />
-          </div>
-          <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
-            {pendingCount}
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Scheduled for later today
-          </p>
-        </div>
-      </div>
-
-      {/* Main Section: Today's Medicines Schedule */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-        
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div>
-            <h3 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Pill className="w-5 h-5 text-emerald-600" />
-              <span>Today's Medicines</span>
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Click Taken, Skipped, or Missed to update your log instantly.
+            <div className="flex items-center gap-2 mb-2">
+              <span className="bg-white/20 backdrop-blur-md text-xs font-semibold px-3 py-1 rounded-full text-white flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" /> {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+              </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Good day, Eleanor!</h1>
+            <p className="text-blue-100 text-xs sm:text-sm mt-1 max-w-md">
+              {progressPercent === 100 && totalCount > 0
+                ? "🎉 Fantastic! You have completed all scheduled medicines for today."
+                : `You have completed ${completedCount} of ${totalCount} doses today. Keep up the great health routine!`}
             </p>
           </div>
 
-          {/* Time Filter Pills */}
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl overflow-x-auto">
-            {(['All', 'Morning', 'Afternoon', 'Evening', 'Night'] as const).map((filter) => (
-              <button
-                key={filter}
-                onClick={() => setSelectedTimeFilter(filter)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                  selectedTimeFilter === filter
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                {filter}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* List of Today's Doses */}
-        {filteredDoses.length === 0 ? (
-          <div className="text-center py-12 px-4 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-            <Pill className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-3" />
-            <p className="text-slate-600 dark:text-slate-400 font-medium">
-              No medicines found for {selectedTimeFilter === 'All' ? 'today' : selectedTimeFilter}.
-            </p>
+          <div className="flex flex-wrap items-center gap-3">
             <button
-              onClick={onNavigateToMedicines}
-              className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors"
+              onClick={toggleSpeakSchedule}
+              className={`px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all shadow-lg active:scale-95 ${
+                isSpeaking 
+                  ? 'bg-amber-400 text-amber-950 animate-pulse' 
+                  : 'bg-emerald-500 hover:bg-emerald-600 text-white'
+              }`}
             >
-              <Plus className="w-4 h-4" />
-              <span>Add New Medicine</span>
+              {isSpeaking ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              {isSpeaking ? 'Stop Audio' : '🔊 Listen Schedule'}
+            </button>
+            <button
+              onClick={onOpenAddMedicine}
+              className="bg-white hover:bg-blue-50 text-blue-700 font-bold px-4 py-2.5 rounded-2xl text-xs sm:text-sm shadow-lg flex items-center gap-2 transition-all active:scale-95"
+            >
+              <Plus className="w-4 h-4" /> Add Medicine
+            </button>
+            <button
+              onClick={() => onOpenAIHub()}
+              className="bg-blue-500/40 hover:bg-blue-500/60 border border-white/20 text-white font-semibold px-4 py-2.5 rounded-2xl text-xs sm:text-sm flex items-center gap-2 transition-all backdrop-blur-md"
+            >
+              <Sparkles className="w-4 h-4 text-amber-300" /> AI Schedule Review
             </button>
           </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredDoses.map(({ med, status }) => {
-              const isTaken = status === 'Taken';
-              const isMissed = status === 'Missed';
-              const isSkipped = status === 'Skipped';
+        </div>
+      </div>
+
+      {/* Missed Threshold Alert Banner */}
+      {missedCount >= 2 && (
+        <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">Attention: Missed Doses Detected</h4>
+            <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">
+              You have missed {missedCount} doses today. If 3 doses are missed consecutively, MediCare AI will automatically send an SMS/Email alert to your emergency contact.
+            </p>
+          </div>
+          <button
+            onClick={() => onOpenAIHub('missed')}
+            className="text-xs font-semibold text-amber-700 dark:text-amber-300 hover:underline shrink-0"
+          >
+            Ask AI Advice →
+          </button>
+        </div>
+      )}
+
+      {/* Key Metrics Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        {/* Progress Circle Card */}
+        <div className="glass-card rounded-2xl p-4 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Adherence Progress</p>
+            <h3 className="text-xl font-black text-slate-900 dark:text-white mt-1">{progressPercent}%</h3>
+            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5">{completedCount} of {totalCount} Taken</p>
+          </div>
+          <div className="relative w-14 h-14 flex items-center justify-center">
+            <svg className="w-14 h-14 transform -rotate-90">
+              <circle cx="28" cy="28" r="22" stroke="currentColor" strokeWidth="5" className="text-slate-100 dark:text-slate-800" fill="transparent" />
+              <circle
+                cx="28"
+                cy="28"
+                r="22"
+                stroke="currentColor"
+                strokeWidth="5"
+                strokeDasharray={138}
+                strokeDashoffset={138 - (138 * progressPercent) / 100}
+                strokeLinecap="round"
+                className="text-blue-600 transition-all duration-700"
+                fill="transparent"
+              />
+            </svg>
+            <span className="absolute text-[10px] font-bold text-slate-800 dark:text-white">{progressPercent}%</span>
+          </div>
+        </div>
+
+        {/* Completed Medicines */}
+        <div className="glass-card rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center backdrop-blur-md">
+            <Check className="w-5 h-5 stroke-[2.5]" />
+          </div>
+          <div>
+            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Taken Today</p>
+            <h3 className="text-xl font-extrabold text-slate-900 dark:text-white mt-0.5">{completedCount}</h3>
+            <span className="text-[10px] text-slate-400">Doses completed</span>
+          </div>
+        </div>
+
+        {/* Missed / Pending */}
+        <div className="glass-card rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-rose-50/80 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center backdrop-blur-md">
+            <X className="w-5 h-5 stroke-[2.5]" />
+          </div>
+          <div>
+            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Missed / Pending</p>
+            <h3 className="text-xl font-extrabold text-slate-900 dark:text-white mt-0.5">{dailyDoses.length - completedCount}</h3>
+            <span className="text-[10px] text-rose-500 font-medium">{missedCount} Missed</span>
+          </div>
+        </div>
+
+        {/* Total Active Medicines */}
+        <div className="glass-card rounded-2xl p-4 shadow-sm flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-blue-50/80 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center backdrop-blur-md">
+            <Pill className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Active Prescriptions</p>
+            <h3 className="text-xl font-extrabold text-slate-900 dark:text-white mt-0.5">{medicines.length}</h3>
+            <span className="text-[10px] text-slate-400">In schedule</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Layout: Next Reminder & Schedule vs AI Tip & Quick Actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Left Column (2 cols): Next Reminder & Today's Schedule */}
+        <div className="lg:col-span-2 space-y-6">
+          
+          {/* Next Reminder Hero Card */}
+          {nextReminder ? (
+            <div className="bg-gradient-to-br from-slate-900 to-blue-950 text-white rounded-3xl p-5 sm:p-6 shadow-xl relative overflow-hidden">
+              <div className="flex items-center justify-between mb-4">
+                <span className="bg-blue-500/30 text-blue-300 text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1.5 border border-blue-400/20">
+                  <BellRing className="w-3.5 h-3.5 text-amber-300 animate-bounce" /> Next Upcoming Reminder
+                </span>
+                <span className="text-xs text-slate-300 font-mono font-medium">
+                  Scheduled for {nextReminder.time} ({nextReminder.slot})
+                </span>
+              </div>
+
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight">{nextReminder.medicine.name}</h2>
+                  <p className="text-xs text-blue-200 mt-0.5">
+                    Dosage: <strong className="text-white">{nextReminder.medicine.dosage}</strong> • {nextReminder.medicine.foodTiming}
+                  </p>
+                  {nextReminder.medicine.purpose && (
+                    <p className="text-xs text-slate-300 mt-2 bg-white/10 px-3 py-1.5 rounded-xl inline-block max-w-md">
+                      💡 {nextReminder.medicine.purpose}
+                    </p>
+                  )}
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-blue-600/50 flex items-center justify-center text-white text-xl font-bold border border-white/20">
+                  💊
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2 mt-5 pt-4 border-t border-white/10">
+                <button
+                  onClick={() => handleAction(nextReminder.medicine, nextReminder.slot, nextReminder.time, 'Taken')}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 shadow-md transition-all active:scale-95"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" /> Mark as Taken
+                </button>
+                <button
+                  onClick={() => handleAction(nextReminder.medicine, nextReminder.slot, nextReminder.time, 'Skipped')}
+                  className="bg-white/10 hover:bg-white/20 text-white font-medium px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all"
+                >
+                  <X className="w-3.5 h-3.5" /> Skip Dose
+                </button>
+                <button
+                  onClick={() => {
+                    alert("Reminder snoozed for 10 minutes!");
+                    triggerBrowserNotification("Reminder Snoozed", `Snoozed ${nextReminder.medicine.name} for 10 minutes.`);
+                  }}
+                  className="bg-white/10 hover:bg-white/20 text-slate-200 font-medium px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all"
+                >
+                  <Clock className="w-3.5 h-3.5" /> Snooze 10m
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 rounded-3xl p-6 text-emerald-900 dark:text-emerald-200 flex items-center gap-4">
+              <ShieldCheck className="w-10 h-10 text-emerald-600 shrink-0" />
+              <div>
+                <h3 className="font-bold text-base">All Reminders Up To Date!</h3>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
+                  You have completed or responded to all upcoming medicine reminders for today.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Today's Schedule by Time Slots */}
+          <div className="glass-panel rounded-3xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">Today's Schedule</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Organized by time of day</p>
+              </div>
+              <button
+                onClick={() => setActiveTab('medicines')}
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              >
+                View All ({medicines.length}) <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {timeSlots.map((slotInfo) => {
+              const SlotIcon = slotInfo.icon;
+              const slotDoses = filteredDoses.filter(d => d.slot === slotInfo.name);
 
               return (
-                <div
-                  key={med.id}
-                  className={`group p-5 rounded-2xl border transition-all ${
-                    isTaken
-                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800'
-                      : isMissed
-                      ? 'bg-red-50/50 dark:bg-red-950/20 border-red-200 dark:border-red-800'
-                      : isSkipped
-                      ? 'bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 opacity-75'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-emerald-400 shadow-sm'
-                  }`}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    
-                    {/* Left: Med Details */}
-                    <div className="flex items-start gap-4">
-                      {/* Color Tag / Pill Icon */}
-                      <div
-                        className="w-12 h-12 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-md"
-                        style={{ backgroundColor: med.color || '#10b981' }}
-                      >
-                        <Pill className="w-6 h-6" />
+                <div key={slotInfo.name} className="border border-slate-100 dark:border-slate-800 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-lg ${slotInfo.bg} ${slotInfo.color}`}>
+                        <SlotIcon className="w-4 h-4" />
                       </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="text-lg font-bold text-slate-900 dark:text-white">
-                            {med.name}
-                          </h4>
-
-                          {/* Status Badge */}
-                          {isTaken && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/80 dark:text-emerald-200">
-                              <Check className="w-3.5 h-3.5" /> Taken
-                            </span>
-                          )}
-                          {isMissed && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-800 dark:bg-red-900/80 dark:text-red-200">
-                              <X className="w-3.5 h-3.5" /> Missed
-                            </span>
-                          )}
-                          {isSkipped && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                              <MinusCircle className="w-3.5 h-3.5" /> Skipped
-                            </span>
-                          )}
-                          {med.isEmergency && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-600 text-white">
-                              CRITICAL
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="text-xs text-slate-600 dark:text-slate-400 font-medium">
-                          <strong>Dosage:</strong> {med.dosage} • <strong>Time:</strong> {med.specificTime || '08:00 AM'} ({med.timesOfDay.join(', ')})
-                        </p>
-
-                        <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
-                          <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-medium">
-                            {med.foodRequirement}
-                          </span>
-                          <span>•</span>
-                          <span>{med.purpose}</span>
-                        </div>
-                      </div>
+                      <span className="font-bold text-xs text-slate-800 dark:text-slate-200">{slotInfo.name} Slot</span>
+                      <span className="text-[10px] text-slate-400 font-medium">({slotDoses.length} items)</span>
                     </div>
-
-                    {/* Right: Action Buttons (Large, high-contrast, accessible) */}
-                    <div className="flex items-center gap-2 self-end sm:self-center">
-                      <button
-                        onClick={() => handleAction({ med, log: undefined, status }, 'Taken')}
-                        className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all active:scale-95 ${
-                          isTaken
-                            ? 'bg-emerald-600 text-white shadow-md'
-                            : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-600 hover:text-white'
-                        }`}
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>Taken</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleAction({ med, log: undefined, status }, 'Skipped')}
-                        className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl font-semibold text-xs sm:text-sm transition-all ${
-                          isSkipped
-                            ? 'bg-slate-700 text-white'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                        }`}
-                      >
-                        <MinusCircle className="w-4 h-4" />
-                        <span>Skip</span>
-                      </button>
-
-                      <button
-                        onClick={() => handleAction({ med, log: undefined, status }, 'Missed')}
-                        className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl font-semibold text-xs sm:text-sm transition-all ${
-                          isMissed
-                            ? 'bg-red-600 text-white'
-                            : 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 hover:bg-red-600 hover:text-white'
-                        }`}
-                      >
-                        <XCircle className="w-4 h-4" />
-                        <span>Missed</span>
-                      </button>
-                    </div>
-
                   </div>
+
+                  {slotDoses.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic py-1 pl-2">No medicines scheduled for {slotInfo.name.toLowerCase()}.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {slotDoses.map((item, idx) => (
+                        <div
+                          key={`${item.medicine.id}_${item.slot}_${idx}`}
+                          className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
+                            item.status === 'Taken'
+                              ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/40'
+                              : item.status === 'Missed'
+                              ? 'bg-rose-50/60 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/40'
+                              : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200/60 dark:border-slate-700/60'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-xs text-slate-900 dark:text-white">{item.medicine.name}</span>
+                              <span className="text-[10px] font-semibold text-slate-500 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded border dark:border-slate-700">
+                                {item.medicine.dosage}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                              ⏰ {item.time} • {item.medicine.foodTiming}
+                            </p>
+                          </div>
+
+                          <div>
+                            {item.status === 'Taken' ? (
+                              <span className="bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1">
+                                <Check className="w-3 h-3" /> Taken
+                              </span>
+                            ) : item.status === 'Missed' ? (
+                              <button
+                                onClick={() => handleAction(item.medicine, item.slot, item.time, 'Taken')}
+                                className="bg-rose-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-lg hover:bg-rose-700 transition-colors"
+                              >
+                                Take Late
+                              </button>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleAction(item.medicine, item.slot, item.time, 'Taken')}
+                                  className="bg-blue-600 hover:bg-blue-700 text-white p-1.5 rounded-lg text-[10px] font-bold"
+                                  title="Mark as Taken"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleAction(item.medicine, item.slot, item.time, 'Skipped')}
+                                  className="bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 p-1.5 rounded-lg text-[10px]"
+                                  title="Skip"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
-        )}
-      </div>
 
-      {/* MediCare AI Quick Assistant Teaser */}
-      <div className="bg-gradient-to-r from-emerald-900 to-slate-900 rounded-3xl p-6 text-white flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-lg">
-        <div className="space-y-2 max-w-xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
-            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>AI Health Assistant</span>
-          </div>
-          <h3 className="text-xl font-bold">Unsure about medicine schedule or interactions?</h3>
-          <p className="text-slate-300 text-xs leading-relaxed">
-            MediCare AI can explain any medicine in simple English, check your active schedule for conflicts, and generate daily adherence reports.
-          </p>
         </div>
 
-        <button
-          onClick={onNavigateToAi}
-          className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm shadow-lg shadow-emerald-500/25 transition-all shrink-0"
-        >
-          <span>Ask MediCare AI</span>
-          <ArrowRight className="w-4 h-4" />
-        </button>
+        {/* Right Column (1 col): AI Health Tip, Quick AI Hub & Refill Alert */}
+        <div className="space-y-6">
+          
+          {/* Today's AI Health Tip Card */}
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-900 dark:to-blue-950/60 rounded-3xl p-5 border border-blue-200/60 dark:border-blue-900/40 shadow-sm relative overflow-hidden">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-blue-600 dark:text-blue-400" /> Today's AI Health Tip
+              </span>
+              <button
+                onClick={fetchTip}
+                disabled={loadingTip}
+                className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                title="Refresh AI tip"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingTip ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-medium">
+              "{healthTip ? healthTip.tip : "Loading daily health insight..."}"
+            </p>
+
+            <div className="mt-3 pt-3 border-t border-blue-200/40 dark:border-blue-900/40 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+              <span>Category: <strong>{healthTip?.category || 'Wellness'}</strong></span>
+              <span>By MediCare AI</span>
+            </div>
+          </div>
+
+          {/* AI Features Quick Access Hub */}
+          <div className="glass-panel rounded-3xl p-5 shadow-sm space-y-3">
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-blue-600" /> AI Assistant Shortcuts
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Gemini AI models trained for elderly medication safety and schedule optimization.
+            </p>
+
+            <div className="grid grid-cols-1 gap-2 pt-1">
+              <button
+                onClick={() => onOpenAIHub('explain')}
+                className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/60 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-white/60 dark:border-slate-700/60 text-left transition-all group backdrop-blur-md"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                    📖 Medicine Explanation
+                  </span>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Simple English breakdown for elderly users</p>
+              </button>
+
+              <button
+                onClick={() => onOpenAIHub('conflict')}
+                className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/60 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-white/60 dark:border-slate-700/60 text-left transition-all group backdrop-blur-md"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                    ⚠️ Schedule Conflict Checker
+                  </span>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Detect close reminders & food timing issues</p>
+              </button>
+
+              <button
+                onClick={() => onOpenAIHub('summary')}
+                className="p-3 rounded-2xl bg-white/60 dark:bg-slate-800/60 hover:bg-blue-50/80 dark:hover:bg-blue-950/40 border border-white/60 dark:border-slate-700/60 text-left transition-all group backdrop-blur-md"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                    📊 Daily Health Summary
+                  </span>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Nightly adherence report & encouragement</p>
+              </button>
+            </div>
+          </div>
+
+          {/* Refill Reminders Card */}
+          <div className="glass-panel rounded-3xl p-5 shadow-sm space-y-3">
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+              <Pill className="w-4 h-4 text-amber-500" /> Pill Inventory & Refills
+            </h3>
+
+            <div className="space-y-2">
+              {medicines.map((med) => {
+                if (med.remainingPills === undefined) return null;
+                const isLow = med.remainingPills <= 20;
+                return (
+                  <div key={med.id} className="flex items-center justify-between text-xs p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50">
+                    <div>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200">{med.name}</span>
+                      <p className="text-[10px] text-slate-500">{med.dosage}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className={`font-bold ${isLow ? 'text-rose-600 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                        {med.remainingPills} pills left
+                      </span>
+                      {isLow && (
+                        <p className="text-[9px] text-rose-500 font-semibold">Refill soon!</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+        </div>
+
       </div>
     </div>
   );

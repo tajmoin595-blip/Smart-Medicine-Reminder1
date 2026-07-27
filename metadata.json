@@ -1,6 +1,6 @@
 {
-  "name": "MediCare AI",
-  "description": "Smart Medicine Reminder & AI Health Assistant for timely medication adherence",
-  "requestFramePermissions": [],
+  "name": "MediCare AI – Smart Medicine Reminder",
+  "description": "Smart AI-powered medicine reminder, tracker, schedule conflict detector, and family alert system.",
+  "requestFramePermissions": ["notifications"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,308 +1,200 @@
 import React, { useState } from 'react';
-import {
-  UserCheck,
-  X,
-  Mail,
-  Lock,
-  User,
-  Shield,
-  Phone,
-  CheckCircle2,
-  LogIn,
-  UserPlus,
-  KeyRound,
-} from 'lucide-react';
-import { UserProfile } from '../types';
+import { X, HeartPulse, Mail, Lock, User, Phone, CheckCircle2 } from 'lucide-react';
+import { setUserAuth, saveProfile, getProfile } from '../services/storage';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  currentUser: UserProfile;
-  onSaveUser: (user: UserProfile) => void;
+  onLoggedIn: () => void;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({
-  isOpen,
-  onClose,
-  currentUser,
-  onSaveUser,
-}) => {
-  const [view, setView] = useState<'login' | 'register' | 'forgot' | 'profile'>('profile');
+export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoggedIn }) => {
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'reset'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState(currentUser.name || '');
-  const [role, setRole] = useState<UserProfile['role']>(currentUser.role || 'Patient');
-  const [phone, setPhone] = useState(currentUser.phone || '');
-  const [forgotSubmitted, setForgotSubmitted] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [age, setAge] = useState('68');
+  const [phone, setPhone] = useState('');
+  const [message, setMessage] = useState('');
 
   if (!isOpen) return null;
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveUser({
-      ...currentUser,
-      email: email || currentUser.email,
-      name: name || email.split('@')[0] || 'MediCare User',
-      role,
-    });
-    onClose();
-  };
-
-  const handleRegister = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSaveUser({
-      id: 'usr-' + Date.now(),
-      name: name || 'MediCare User',
-      email: email || 'user@medicare.ai',
-      role,
-      phone,
-    });
-    onClose();
-  };
-
-  const handleForgot = (e: React.FormEvent) => {
-    e.preventDefault();
-    setForgotSubmitted(true);
+    if (mode === 'register') {
+      if (password !== confirmPassword) {
+        alert('Passwords do not match!');
+        return;
+      }
+      const existing = getProfile();
+      saveProfile({
+        ...existing,
+        fullName: fullName || 'Eleanor Vance',
+        email: email || 'eleanor.vance@example.com',
+        age: Number(age) || 68,
+        phoneNumber: phone || '+1 (555) 234-5678'
+      });
+      setUserAuth({ isLoggedIn: true, email, name: fullName });
+      onLoggedIn();
+      onClose();
+    } else if (mode === 'login') {
+      setUserAuth({ isLoggedIn: true, email: email || 'eleanor.vance@example.com', name: 'Eleanor Vance' });
+      onLoggedIn();
+      onClose();
+    } else if (mode === 'forgot') {
+      setMessage('Password reset code sent to your email address!');
+      setTimeout(() => setMode('reset'), 1500);
+    } else if (mode === 'reset') {
+      alert('Password updated successfully! Please sign in.');
+      setMode('login');
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-5">
+    <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="glass-panel w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-scale-up">
         
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-          <h3 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <UserCheck className="w-5 h-5 text-emerald-600" />
-            <span>
-              {view === 'profile'
-                ? 'User Profile & Auth'
-                : view === 'login'
-                ? 'Sign In to MediCare AI'
-                : view === 'register'
-                ? 'Create MediCare Account'
-                : 'Reset Password'}
-            </span>
-          </h3>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-white"
-          >
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white text-center relative">
+          <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white">
             <X className="w-5 h-5" />
           </button>
-        </div>
-
-        {/* View Switcher Tabs */}
-        <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl text-xs font-semibold">
-          <button
-            onClick={() => setView('profile')}
-            className={`flex-1 py-1.5 rounded-xl transition-colors ${
-              view === 'profile' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'
-            }`}
-          >
-            My Profile
-          </button>
-          <button
-            onClick={() => setView('login')}
-            className={`flex-1 py-1.5 rounded-xl transition-colors ${
-              view === 'login' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'
-            }`}
-          >
-            Sign In
-          </button>
-          <button
-            onClick={() => setView('register')}
-            className={`flex-1 py-1.5 rounded-xl transition-colors ${
-              view === 'register' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500'
-            }`}
-          >
-            Register
-          </button>
-        </div>
-
-        {/* PROFILE VIEW */}
-        {view === 'profile' && (
-          <div className="space-y-4 text-xs">
-            <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-emerald-600 text-white font-bold text-lg flex items-center justify-center shrink-0">
-                {currentUser.name.charAt(0)}
-              </div>
-              <div>
-                <h4 className="text-base font-bold text-slate-900 dark:text-white">{currentUser.name}</h4>
-                <p className="text-slate-500 dark:text-slate-400">{currentUser.email}</p>
-                <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-emerald-200 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-200 font-bold text-[10px]">
-                  Role: {currentUser.role}
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="block font-bold text-slate-700 dark:text-slate-300">Full Name</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="block font-bold text-slate-700 dark:text-slate-300">Account Role</label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value as UserProfile['role'])}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-semibold"
-              >
-                <option value="Patient">Patient</option>
-                <option value="Caregiver">Caregiver</option>
-                <option value="Family Member">Family Member</option>
-              </select>
-            </div>
-
-            <button
-              onClick={() => {
-                onSaveUser({ ...currentUser, name, role });
-                onClose();
-              }}
-              className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-colors"
-            >
-              Update Profile
-            </button>
+          <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center mx-auto mb-2">
+            <HeartPulse className="w-6 h-6 animate-pulse text-white" />
           </div>
-        )}
+          <h2 className="text-xl font-extrabold">MediCare AI Account</h2>
+          <p className="text-xs text-blue-100 mt-0.5">Secure Patient Authentication</p>
+        </div>
 
-        {/* LOGIN VIEW */}
-        {view === 'login' && (
-          <form onSubmit={handleLogin} className="space-y-3 text-xs">
-            <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
-              <input
-                type="email"
-                required
-                placeholder="eleanor@medicare.ai"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Password</label>
-              <input
-                type="password"
-                required
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-              />
-            </div>
-
-            <div className="flex justify-between items-center text-[11px]">
-              <button
-                type="button"
-                onClick={() => setView('forgot')}
-                className="text-emerald-600 dark:text-emerald-400 hover:underline font-medium"
-              >
-                Forgot Password?
-              </button>
-            </div>
-
+        {/* Auth Body */}
+        <div className="p-6 space-y-4 text-xs">
+          
+          {/* Mode Switcher */}
+          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl font-bold">
             <button
-              type="submit"
-              className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-colors"
+              onClick={() => setMode('login')}
+              className={`flex-1 py-1.5 rounded-xl transition-all ${mode === 'login' ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-sm' : 'text-slate-500'}`}
             >
               Sign In
             </button>
-          </form>
-        )}
+            <button
+              onClick={() => setMode('register')}
+              className={`flex-1 py-1.5 rounded-xl transition-all ${mode === 'register' ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-sm' : 'text-slate-500'}`}
+            >
+              Register
+            </button>
+          </div>
 
-        {/* REGISTER VIEW */}
-        {view === 'register' && (
-          <form onSubmit={handleRegister} className="space-y-3 text-xs">
-            <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Full Name *</label>
-              <input
-                type="text"
-                required
-                placeholder="Eleanor Vance"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-              />
+          {message && (
+            <div className="bg-emerald-50 text-emerald-800 p-2.5 rounded-xl border border-emerald-200 text-center font-semibold">
+              {message}
             </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-3">
+            {mode === 'register' && (
+              <>
+                <div>
+                  <label className="block font-semibold mb-1">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Eleanor Vance"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block font-semibold mb-1">Age</label>
+                    <input
+                      type="number"
+                      placeholder="68"
+                      value={age}
+                      onChange={(e) => setAge(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1">Phone</label>
+                    <input
+                      type="tel"
+                      placeholder="+1 (555) 234-5678"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Email Address *</label>
+              <label className="block font-semibold mb-1">Email Address *</label>
               <input
                 type="email"
                 required
-                placeholder="eleanor@medicare.ai"
+                placeholder="eleanor@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border"
               />
             </div>
 
-            <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Phone Number</label>
-              <input
-                type="tel"
-                placeholder="+1 (555) 123-4567"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-              />
-            </div>
+            {(mode === 'login' || mode === 'register' || mode === 'reset') && (
+              <div>
+                <label className="block font-semibold mb-1">Password *</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border"
+                />
+              </div>
+            )}
+
+            {mode === 'register' && (
+              <div>
+                <label className="block font-semibold mb-1">Confirm Password *</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border"
+                />
+              </div>
+            )}
+
+            {mode === 'login' && (
+              <div className="text-right">
+                <button
+                  type="button"
+                  onClick={() => setMode('forgot')}
+                  className="text-[11px] text-blue-600 hover:underline font-semibold"
+                >
+                  Forgot Password?
+                </button>
+              </div>
+            )}
 
             <button
               type="submit"
-              className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-colors"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl shadow-md transition-all mt-2"
             >
-              Register Account
+              {mode === 'login' && 'Sign In to Account'}
+              {mode === 'register' && 'Create Account'}
+              {mode === 'forgot' && 'Send Reset Email'}
+              {mode === 'reset' && 'Update Password'}
             </button>
           </form>
-        )}
 
-        {/* FORGOT PASSWORD VIEW */}
-        {view === 'forgot' && (
-          <div className="space-y-3 text-xs">
-            {forgotSubmitted ? (
-              <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-center space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-                <h4 className="font-bold text-slate-900 dark:text-white text-sm">Password Reset Link Sent</h4>
-                <p className="text-slate-600 dark:text-slate-400">
-                  If an account exists for {email}, a password reset email has been sent.
-                </p>
-                <button
-                  onClick={() => setView('login')}
-                  className="mt-2 text-emerald-600 font-bold hover:underline"
-                >
-                  Back to Sign In
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={handleForgot} className="space-y-3">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="user@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="w-full py-3 rounded-2xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-colors"
-                >
-                  Send Reset Link
-                </button>
-              </form>
-            )}
-          </div>
-        )}
+        </div>
 
       </div>
     </div>

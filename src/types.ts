@@ -1,79 +1,136 @@
-export type MedicineType = 'Tablet' | 'Capsule' | 'Syrup' | 'Injection' | 'Drops';
+export type MedicineType = 'Tablet' | 'Capsule' | 'Syrup' | 'Injection' | 'Drops' | 'Cream';
 
-export type FoodRequirement = 'Before Food' | 'After Food' | 'With Food' | 'No Preference';
+export type FoodTiming = 'Before Food' | 'After Food' | 'With Food' | 'Any Time';
 
-export type DoseStatus = 'Taken' | 'Skipped' | 'Missed' | 'Pending';
+export type TimeSlot = 'Morning' | 'Afternoon' | 'Evening' | 'Night';
 
-export interface MedicineItem {
-  id: string;
-  name: string;
-  purpose: string;
-  dosage: string; // e.g. "500 mg", "1 tablet", "5 ml"
-  timesOfDay: ('Morning' | 'Afternoon' | 'Evening' | 'Night')[];
-  specificTime: string; // e.g. "08:00"
-  foodRequirement: FoodRequirement;
-  startDate: string; // YYYY-MM-DD
-  endDate?: string; // YYYY-MM-DD
-  color: string; // Tailwind hex or class name
-  type: MedicineType;
-  notes?: string;
-  photoUrl?: string;
-  isEmergency?: boolean; // Critical medicine flag
-  createdAt: string;
+export type FrequencyType = 'Every Day' | 'Alternate Days' | 'Weekly' | 'Monthly';
+
+export interface TimeSchedule {
+  slot: TimeSlot;
+  time: string; // e.g. "08:00"
+  enabled: boolean;
 }
 
-export interface DoseLog {
+export interface Medicine {
+  id: string;
+  name: string;
+  genericName?: string;
+  brandName?: string;
+  disease?: string;
+  dosage: string; // e.g., "500 mg" or "10 ml"
+  type: MedicineType;
+  color?: string; // e.g. "#3b82f6" or "blue"
+  description?: string;
+  purpose: string;
+  times: TimeSchedule[]; // Morning, Afternoon, Evening, Night
+  customTime?: string;
+  foodTiming: FoodTiming;
+  startDate: string; // YYYY-MM-DD
+  endDate?: string; // YYYY-MM-DD
+  frequency: FrequencyType;
+  photoUrl?: string;
+  doctorName?: string;
+  hospital?: string;
+  prescriptionNumber?: string;
+  notes?: string;
+  remainingPills?: number;
+  totalPills?: number;
+  refillReminder?: boolean;
+}
+
+export type DoseStatus = 'Taken' | 'Missed' | 'Skipped' | 'Snoozed';
+
+export interface MedicineHistoryItem {
   id: string;
   medicineId: string;
   medicineName: string;
-  scheduledTime: string; // e.g. "2026-07-26 08:00"
-  date: string; // YYYY-MM-DD
-  time: string; // HH:mm
-  status: DoseStatus;
-  actionTime?: string; // actual timestamp when marked
+  dosage: string;
   type: MedicineType;
-  color: string;
+  scheduledTime: string; // e.g., "08:00 AM"
+  actionTime?: string; // ISO string when action taken
+  status: DoseStatus;
+  date: string; // YYYY-MM-DD
+  slot: TimeSlot;
   notes?: string;
 }
 
 export interface FamilyMember {
   id: string;
   name: string;
-  relationship: string; // e.g. "Daughter", "Son", "Doctor", "Caregiver"
   phone: string;
   email: string;
+  relationship: 'Father' | 'Mother' | 'Son' | 'Daughter' | 'Brother' | 'Sister' | 'Friend' | 'Doctor' | 'Other';
   notifyOnMissed: boolean;
-  notifyOnEmergencySkipped: boolean;
-  lastNotifiedAt?: string;
+  notifyOnEmergency: boolean;
 }
 
-export interface CaregiverAlert {
+export interface AppNotification {
   id: string;
-  memberId: string;
-  memberName: string;
-  medicineName: string;
-  alertType: 'Missed Dose' | '3 Reminders Ignored' | 'Emergency Medicine Skipped' | 'SOS Alert';
+  title: string;
+  message: string;
+  type: 'reminder' | 'missed' | 'family_alert' | 'ai' | 'system';
   timestamp: string;
-  status: 'Sent' | 'Delivered' | 'Read';
-}
-
-export interface AppSettings {
-  darkMode: boolean;
-  fontSize: 'normal' | 'large' | 'extra-large';
-  language: string;
-  notificationSound: boolean;
-  soundVolume: number; // 0 to 100
-  reminderInterval: number; // minutes (e.g., 15 or 30)
-  voiceReminders: boolean;
+  read: boolean;
+  medicineId?: string;
 }
 
 export interface UserProfile {
   id: string;
-  name: string;
+  fullName: string;
   email: string;
-  avatarUrl?: string;
-  role: 'Patient' | 'Caregiver' | 'Family Member';
-  phone?: string;
-  emergencyContactName?: string;
-  emergencyContactPhone?: string;
+  age: number;
+  gender: 'Male' | 'Female' | 'Other' | 'Prefer not to say';
+  phoneNumber: string;
+  emergencyContact: string;
+  bloodGroup: string;
+  weight: string; // e.g. "68 kg"
+  height: string; // e.g. "172 cm"
+  medicalConditions: string[];
+  allergies: string[];
+  photoUrl?: string;
+}
+
+export interface AppSettings {
+  darkMode: boolean;
+  language: string;
+  reminderSound: string;
+  reminderVolume: number; // 0 to 100
+  browserNotificationsEnabled: boolean;
+  familyAlertThreshold: number; // e.g. 3 missed doses
+  snoozeDurationMinutes: number; // e.g. 10
+}
+
+export interface AIExplanationResult {
+  medicineName: string;
+  summary: string;
+  howItWorks: string;
+  foodInstructions: string;
+  commonSideEffects: string[];
+  safetyDisclaimer: string;
+}
+
+export interface AIConflictReport {
+  hasConflict: boolean;
+  severity: 'low' | 'medium' | 'high' | 'none';
+  findings: string[];
+  recommendations: string[];
+  disclaimer: string;
+}
+
+export interface AIDailySummary {
+  completionRate: number;
+  takenCount: number;
+  missedCount: number;
+  skippedCount: number;
+  summaryTitle: string;
+  insights: string[];
+  motivationalMessage: string;
+}
+
+export interface AIMissedDoseAdvice {
+  medicineName: string;
+  importanceExplanation: string;
+  recommendedActions: string[];
+  disclaimer: string;
 }
